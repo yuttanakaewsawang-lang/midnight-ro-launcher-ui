@@ -45,8 +45,8 @@ var LAUNCHER_CONFIG = {
        The bundled values are only an offline fallback. */
     patchStatusUrl: 'https://github.com/yuttanakaewsawang-lang/midnight-ro-patch/' +
         'releases/download/patches/patch_status.js',
-    bundledPatchIndex: 34,
-    bundledPatchFile: '0034_20260830_costume-level-one.thor',
+    bundledPatchIndex: 35,
+    bundledPatchFile: '0035_20260830_dynamic-launcher-patch-status.thor',
 
     /* Leave empty to keep the button showing "ยังไม่เปิดให้บริการ".
        rpatchur has no command for opening a browser, so a real URL here still
