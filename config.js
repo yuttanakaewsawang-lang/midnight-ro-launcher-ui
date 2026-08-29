@@ -40,6 +40,14 @@ var LAUNCHER_CONFIG = {
         'releases/download/patches/news.js',
     newsTimeoutMs: 4000,
 
+    /* Dynamic patch number shown after verification. This is a script rather
+       than XHR/JSON because MSHTML blocks cross-origin XHR to release assets.
+       The bundled values are only an offline fallback. */
+    patchStatusUrl: 'https://github.com/yuttanakaewsawang-lang/midnight-ro-patch/' +
+        'releases/download/patches/patch_status.js',
+    bundledPatchIndex: 34,
+    bundledPatchFile: '0034_20260830_costume-level-one.thor',
+
     /* Leave empty to keep the button showing "ยังไม่เปิดให้บริการ".
        rpatchur has no command for opening a browser, so a real URL here still
        needs the launcher to gain that ability first - see the note in

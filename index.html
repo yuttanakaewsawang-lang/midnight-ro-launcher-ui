@@ -382,6 +382,9 @@ html, body {
 var isReady = false;
 var isPatching = false;
 var lastPatchFile = '-';
+var launcherConfig = window.LAUNCHER_CONFIG || {};
+var latestPublishedPatchIndex = parseInt(launcherConfig.bundledPatchIndex, 10) || 0;
+var latestPublishedPatchFile = launcherConfig.bundledPatchFile || '-';
 
 function $(id) { return document.getElementById(id); }
 
@@ -424,6 +427,50 @@ function setLauncherReady(ready) {
         startBtn.className = 'disabled';
         startBtn.title = isPatching ? 'กำลังอัปเดตไฟล์ กรุณารอสักครู่...' : 'กำลังตรวจสอบไฟล์...';
     }
+}
+
+function readyFileStatus() {
+    if (latestPublishedPatchIndex > 0) {
+        return 'สมบูรณ์ (' + latestPublishedPatchIndex + '/' + latestPublishedPatchIndex + ')';
+    }
+    return 'สมบูรณ์';
+}
+
+function updateReadyDetail() {
+    var patchFile = latestPublishedPatchFile !== '-' ? latestPublishedPatchFile : lastPatchFile;
+    setDetail('กด "START GAME" เพื่อเริ่มเกม', '-', readyFileStatus(), patchFile);
+}
+
+function applyRemotePatchStatus() {
+    var status = window.MIDNIGHT_PATCH_STATUS;
+    var parsedIndex;
+    if (!status) { return; }
+    parsedIndex = parseInt(status.latestIndex, 10);
+    if (parsedIndex > 0) { latestPublishedPatchIndex = parsedIndex; }
+    if (status.latestFile) { latestPublishedPatchFile = String(status.latestFile); }
+    if (isReady) { updateReadyDetail(); }
+}
+
+function loadRemotePatchStatus() {
+    var cfg = window.LAUNCHER_CONFIG || {};
+    var script;
+    var completed = false;
+    var finish = function () {
+        if (completed) { return; }
+        completed = true;
+        applyRemotePatchStatus();
+    };
+    if (!cfg.patchStatusUrl) { return; }
+    script = document.createElement('script');
+    script.type = 'text/javascript';
+    script.onload = finish;
+    script.onreadystatechange = function () {
+        if (this.readyState === 'loaded' || this.readyState === 'complete') { finish(); }
+    };
+    script.src = cfg.patchStatusUrl +
+        (cfg.patchStatusUrl.indexOf('?') >= 0 ? '&' : '?') +
+        't=' + (new Date()).getTime();
+    document.getElementsByTagName('head')[0].appendChild(script);
 }
 
 function humanSpeed(bytes) {
@@ -476,7 +523,8 @@ function patchingStatusReady() {
     isPatching = false;
     setProgress(100);
     setStatus('ไฟล์ครบถ้วน พร้อมเข้าเล่นเกม', false);
-    setDetail('กด "START GAME" เพื่อเริ่มเกม', '-', 'สมบูรณ์ (29/29)', lastPatchFile);
+    applyRemotePatchStatus();
+    updateReadyDetail();
     setLauncherReady(true);
 }
 
@@ -1006,6 +1054,7 @@ function initStarfield() {
 
 window.onload = function () {
     initStarfield();
+    loadRemotePatchStatus();
     startUpdate();
 };
 
