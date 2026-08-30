@@ -354,6 +354,13 @@ html, body {
                 <span id="txt-patch">แพตช์ล่าสุด: <b>-</b></span>
             </div>
 
+
+            <!-- Patch log panel (local build) -->
+            <div id="patch-log-wrap">
+                <div id="patch-log-head">บันทึกการติดตั้งแพตช์</div>
+                <div id="patch-log"></div>
+                <div id="patch-verdict">-</div>
+            </div>
             <!-- Action Buttons -->
             <div id="buttons-area">
                 <a class="btn-action" id="btn-website" href="javascript:void(0);" title="เปิดหน้าหลักเว็บ">
@@ -1062,6 +1069,235 @@ window.onload = function () {
 if (document.readyState === 'complete' || document.readyState === 'interactive') {
     initStarfield();
 }
+</script>
+
+<style>
+/* ---- Patch log panel (local build) ---- */
+#patch-log-wrap { position: absolute; left: 0; bottom: 100%; margin-bottom: 12px; width: 520px;
+  background: rgba(8,10,24,0.82); border: 1px solid rgba(150,170,255,0.28);
+  border-radius: 8px; padding: 8px 10px; z-index: 40; display: none;
+  font-family: Consolas, 'Courier New', monospace; box-shadow: 0 4px 18px rgba(0,0,0,0.5); }
+#patch-log-head { color: #cdd6ff; font-size: 12px; padding-bottom: 5px; margin-bottom: 5px;
+  border-bottom: 1px solid rgba(150,170,255,0.20); font-family: Tahoma, sans-serif; }
+#patch-log { max-height: 168px; overflow-y: auto; font-size: 11px; line-height: 1.55; color: #9fb0d8; }
+#patch-log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#patch-log .ok   { color: #7ee0a8; }
+#patch-log .bad  { color: #ff8a8a; }
+#patch-log .info { color: #9fb0d8; }
+#patch-log .warn { color: #ffd479; }
+#patch-verdict { margin-top: 6px; padding-top: 5px; font-size: 12px; font-family: Tahoma, sans-serif;
+  border-top: 1px solid rgba(150,170,255,0.20); color: #cdd6ff; }
+</style>
+
+<script>
+/* ==========================================================
+   Patch log + real local-state verification (local build).
+   ES5 only: this page runs in MSHTML (IE11 mode).
+   ========================================================== */
+(function () {
+    var SEP  = String.fromCharCode(92);
+    var TICK = String.fromCharCode(10003);
+    var CROSS = String.fromCharCode(10007);
+    var wrap    = document.getElementById('patch-log-wrap');
+    var logEl   = document.getElementById('patch-log');
+    var headEl  = document.getElementById('patch-log-head');
+    var verdict = document.getElementById('patch-verdict');
+    var applied = [];
+    var startIndex = null;
+    var HEAD = 'บันทึกการติดตั้งแพตช์';
+
+    function pad2(n) { return (n < 10 ? '0' : '') + n; }
+    function stamp() {
+        var d = new Date();
+        return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+    }
+    function esc(t) {
+        return String(t).split('&').join('&amp;').split('<').join('&lt;');
+    }
+    var logPath = null;
+    function clientRoot() {
+        try {
+            var fso = new ActiveXObject('Scripting.FileSystemObject');
+            var p = decodeURIComponent(location.pathname);
+            if (p.charAt(0) === '/') { p = p.substring(1); }
+            p = p.split('/').join(SEP);
+            return fso.GetParentFolderName(p);
+        } catch (e) { return null; }
+    }
+    function writeLogFile(text) {
+        try {
+            var fso = new ActiveXObject('Scripting.FileSystemObject');
+            if (logPath === null) {
+                var dir = clientRoot();
+                if (!dir) { return; }
+                logPath = fso.BuildPath(dir, 'patch-log.txt');
+            }
+            var fh = fso.OpenTextFile(logPath, 8, true);
+            fh.WriteLine('[' + stamp() + '] ' + text);
+            fh.Close();
+        } catch (e) { }
+    }
+
+    /* Which transport actually reaches rpatchur. If neither exists the stock
+       callPatcher() silently fakes a "ready" callback after 700ms, which looks
+       exactly like "nothing to install". */
+    function probeBridge() {
+        var ext = 'no', cw = 'no';
+        try { if (typeof external !== 'undefined' && external && external.invoke) { ext = 'yes'; } } catch (e) { ext = 'threw:' + e.message; }
+        try { if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) { cw = 'yes'; } } catch (e) { cw = 'threw:' + e.message; }
+        return 'external.invoke=' + ext + ' chrome.webview=' + cw;
+    }
+
+    function addLog(text, cls) {
+        if (!logEl) { return; }
+        wrap.style.display = 'block';
+        var row = document.createElement('div');
+        row.className = cls || 'info';
+        row.innerHTML = '[' + stamp() + '] ' + esc(text);
+        logEl.appendChild(row);
+        logEl.scrollTop = logEl.scrollHeight;
+        writeLogFile(text);
+    }
+
+    /* Read the patch index the client ACTUALLY has on disk. The stock UI shows
+       only the number published on the server, which stays at the latest value
+       even when nothing was installed on this machine. */
+    function readLocalPatchIndex() {
+        try {
+            var fso = new ActiveXObject('Scripting.FileSystemObject');
+            var p = decodeURIComponent(location.pathname);
+            if (p.charAt(0) === '/') { p = p.substring(1); }
+            p = p.split('/').join(SEP);
+            var root = fso.GetParentFolderName(fso.GetParentFolderName(p));
+            var dat  = fso.BuildPath(root, 'MidnightRO.dat');
+            if (!fso.FileExists(dat)) { return null; }
+            var fh  = fso.OpenTextFile(dat, 1);
+            var txt = fh.ReadAll();
+            fh.Close();
+            var key = 'last_patch_index';
+            var i = txt.indexOf(key);
+            if (i < 0) { return null; }
+            var rest = txt.substring(i + key.length), num = '';
+            for (var j = 0; j < rest.length; j++) {
+                var c = rest.charAt(j);
+                if (c >= '0' && c <= '9') { num += c; }
+                else if (num.length) { break; }
+            }
+            return num.length ? parseInt(num, 10) : null;
+        } catch (e) { return null; }
+    }
+
+    function setHead() {
+        headEl.innerHTML = HEAD + ' &nbsp;-&nbsp; สำเร็จแล้ว ' + applied.length + ' ตัว';
+    }
+
+    function showVerdict() {
+        var local  = readLocalPatchIndex();
+        var server = latestPublishedPatchIndex;
+        if (local === null) {
+            verdict.innerHTML = server > 0 ? 'แพตช์ล่าสุดบนเซิร์ฟเวอร์: ' + server : '-';
+            return;
+        }
+        if (server > 0 && local >= server) {
+            verdict.innerHTML = '<span style="color:#7ee0a8">' + TICK + ' ครบถ้วน - เครื่องนี้อยู่ที่แพตช์ ' +
+                local + ' / เซิร์ฟเวอร์ล่าสุด ' + server + '</span>';
+        } else if (server > 0) {
+            verdict.innerHTML = '<span style="color:#ff8a8a">' + CROSS + ' ยังไม่ครบ - เครื่องนี้อยู่ที่แพตช์ ' +
+                local + ' แต่เซิร์ฟเวอร์ล่าสุด ' + server + ' (ขาด ' + (server - local) + ')</span>';
+        } else {
+            verdict.innerHTML = 'เครื่องนี้อยู่ที่แพตช์ ' + local;
+        }
+    }
+
+    /* Never let the log panel break the launcher: every call into this code
+       is swallowed, the original callback always runs. */
+    function guard(fn) {
+        try { fn(); } catch (e) { }
+    }
+
+    /* ---- wrap the command channel ---- */
+    var _call = callPatcher;
+    callPatcher = function (action) {
+        guard(function () { addLog('>> command: ' + action + '  [' + probeBridge() + ']', 'warn'); });
+        _call(action);
+    };
+
+    /* ---- wrap the launcher callbacks ---- */
+    var _start = startUpdate;
+    var _app   = patchingStatusPatchApplied;
+    var _dl    = patchingStatusDownloading;
+    var _inst  = patchingStatusInstalling;
+    var _ready = patchingStatusReady;
+    var _err   = patchingStatusError;
+    var lastDl = -1, lastInst = -1;
+
+    startUpdate = function () {
+        if (isPatching) { return; }
+        guard(function () {
+            applied = [];
+            lastDl = -1; lastInst = -1;
+            logEl.innerHTML = '';
+            verdict.innerHTML = '-';
+            headEl.innerHTML = HEAD;
+            startIndex = readLocalPatchIndex();
+            wrap.style.display = 'block';
+            addLog('เริ่มตรวจสอบอัปเดต - เครื่องนี้อยู่ที่แพตช์ ' + (startIndex === null ? '(อ่านไม่ได้)' : startIndex), 'info');
+        });
+        _start();
+    };
+
+    patchingStatusPatchApplied = function (fileName) {
+        guard(function () {
+            applied.push(fileName);
+            addLog(TICK + ' ติดตั้งสำเร็จ: ' + fileName, 'ok');
+            setHead();
+        });
+        _app(fileName);
+    };
+
+    patchingStatusDownloading = function (n, total, bps) {
+        guard(function () {
+            if (n !== lastDl) { lastDl = n; addLog('ดาวน์โหลด ' + n + ' / ' + total, 'info'); }
+        });
+        _dl(n, total, bps);
+    };
+
+    patchingStatusInstalling = function (n, total) {
+        guard(function () {
+            if (n !== lastInst) { lastInst = n; addLog('กำลังติดตั้ง ' + n + ' / ' + total, 'info'); }
+        });
+        _inst(n, total);
+    };
+
+    patchingStatusReady = function () {
+        _ready();
+        guard(function () {
+            if (applied.length === 0) { addLog('ไม่มีแพตช์ใหม่ที่ต้องติดตั้ง', 'info'); }
+            else { addLog('จบการติดตั้ง - สำเร็จ ' + applied.length + ' ตัว', 'ok'); }
+            showVerdict();
+        });
+    };
+
+    patchingStatusError = function (msg) {
+        guard(function () {
+            addLog(CROSS + ' ผิดพลาด: ' + msg, 'bad');
+            if (applied.length) { addLog('ติดตั้งสำเร็จก่อนหยุด ' + applied.length + ' ตัว', 'warn'); }
+        });
+        _err(msg);
+        guard(showVerdict);
+    };
+
+    /* show the verdict on first load too, once the server number has arrived */
+    window.setTimeout(function () {
+        guard(function () {
+            wrap.style.display = 'block';
+            writeLogFile('---- launcher opened ----');
+            addLog('page: ' + location.href, 'info');
+            addLog('bridge: ' + probeBridge(), 'warn');
+            showVerdict();
+        });
+    }, 2500);
+})();
 </script>
 </body>
 </html>
