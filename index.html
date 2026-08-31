@@ -1344,14 +1344,37 @@ if (document.readyState === 'complete' || document.readyState === 'interactive')
         });
     };
 
+    /* What this run is actually configured with. A player who edited
+       MidnightRO.yml shows up here as a different page URL; the page cannot
+       read that file itself, so this is the closest honest signal. */
+    function logEnvironment() {
+        var cfg, mode;
+        addLog('page: ' + location.href, 'info');
+        try { cfg = window.LAUNCHER_CONFIG || {}; } catch (e) { cfg = {}; }
+        addLog('ui: config.js bundled=' + (cfg.bundledPatchIndex || '-') +
+               ' (' + (cfg.bundledPatchFile || '-') + ')', 'info');
+        try { mode = document.documentMode; } catch (e) { mode = '-'; }
+        addLog('engine: documentMode=' + (mode || '-'), 'info');
+    }
+
+    function logServerStatus() {
+        var st = null;
+        try { st = window.MIDNIGHT_PATCH_STATUS; } catch (e) { }
+        if (st) {
+            addLog('server: latest=' + st.latestIndex + '  updated=' + (st.updatedAt || '-'), 'info');
+        } else {
+            addLog('server: โหลดสถานะจากเซิร์ฟเวอร์ไม่สำเร็จ', 'warn');
+        }
+    }
+
     guard(function () {
         wrap.style.display = 'block';
         setTitle('');
         store('---- launcher opened ----');
-        addLog('page: ' + location.href, 'info');
+        logEnvironment();
     });
-    /* the verdict needs MIDNIGHT_PATCH_STATUS, which arrives by script tag */
-    window.setTimeout(function () { guard(showVerdict); }, 2500);
+    /* MIDNIGHT_PATCH_STATUS arrives by script tag, so report it once it lands */
+    window.setTimeout(function () { guard(logServerStatus); guard(showVerdict); }, 2500);
 })();
 </script>
 </body>
