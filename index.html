@@ -1121,7 +1121,7 @@ if (document.readyState === 'complete' || document.readyState === 'interactive')
             var p = decodeURIComponent(location.pathname);
             if (p.charAt(0) === '/') { p = p.substring(1); }
             p = p.split('/').join(SEP);
-            return fso.GetParentFolderName(p);
+            return fso.GetParentFolderName(fso.GetParentFolderName(p));
         } catch (e) { return null; }
     }
     function writeLogFile(text) {
@@ -1138,14 +1138,31 @@ if (document.readyState === 'complete' || document.readyState === 'interactive')
         } catch (e) { }
     }
 
-    /* Which transport actually reaches rpatchur. If neither exists the stock
-       callPatcher() silently fakes a "ready" callback after 700ms, which looks
-       exactly like "nothing to install". */
+    /* Diagnostics only. Note that a falsy external.invoke does NOT mean the
+       bridge is missing: window.external is a legacy IDispatch host object that
+       answers method calls but not property reads. Never branch on this. */
     function probeBridge() {
-        var ext = 'no', cw = 'no';
-        try { if (typeof external !== 'undefined' && external && external.invoke) { ext = 'yes'; } } catch (e) { ext = 'threw:' + e.message; }
-        try { if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) { cw = 'yes'; } } catch (e) { cw = 'threw:' + e.message; }
-        return 'external.invoke=' + ext + ' chrome.webview=' + cw;
+        var t = 'none', inv = 'none', cw = 'no';
+        try { t = typeof window.external; } catch (e) { t = 'threw'; }
+        try { inv = typeof window.external.invoke; } catch (e) { inv = 'threw'; }
+        try { if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) { cw = 'yes'; } } catch (e) { cw = 'threw'; }
+        return 'typeof external=' + t + ' typeof invoke=' + inv + ' chrome.webview=' + cw;
+    }
+
+    /* Send a command the only way that is reliable here: just call it. */
+    function dispatchCommand(action) {
+        try {
+            window.external.invoke(action);
+            return 'external.invoke';
+        } catch (e1) {
+            try {
+                if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {
+                    window.chrome.webview.postMessage(action);
+                    return 'chrome.webview';
+                }
+            } catch (e2) { }
+            return 'FAILED: ' + (e1 && e1.message ? e1.message : e1);
+        }
     }
 
     function addLog(text, cls) {
@@ -1188,7 +1205,8 @@ if (document.readyState === 'complete' || document.readyState === 'interactive')
     }
 
     function setHead() {
-        headEl.innerHTML = HEAD + ' &nbsp;-&nbsp; สำเร็จแล้ว ' + applied.length + ' ตัว';
+        var n = applied.length ? applied.length : installedTotal;
+        headEl.innerHTML = HEAD + ' &nbsp;-&nbsp; สำเร็จแล้ว ' + n + ' ตัว';
     }
 
     function showVerdict() {
@@ -1215,11 +1233,16 @@ if (document.readyState === 'complete' || document.readyState === 'interactive')
         try { fn(); } catch (e) { }
     }
 
-    /* ---- wrap the command channel ---- */
-    var _call = callPatcher;
+    /* ---- take over the command channel ------------------------------------
+       The stock callPatcher is deliberately NOT called: its truthiness test on
+       external.invoke sends every command into the fake-ready branch. */
     callPatcher = function (action) {
-        guard(function () { addLog('>> command: ' + action + '  [' + probeBridge() + ']', 'warn'); });
-        _call(action);
+        var how = dispatchCommand(action);
+        var failed = how.indexOf('FAILED') === 0;
+        guard(function () {
+            addLog('>> command: ' + action + '  via ' + how, failed ? 'bad' : 'warn');
+            if (failed) { addLog('ส่งคำสั่งไปที่ตัวแพตช์ไม่ได้ - ไม่ได้ตรวจอัปเดตจริง', 'bad'); }
+        });
     };
 
     /* ---- wrap the launcher callbacks ---- */
@@ -1229,13 +1252,13 @@ if (document.readyState === 'complete' || document.readyState === 'interactive')
     var _inst  = patchingStatusInstalling;
     var _ready = patchingStatusReady;
     var _err   = patchingStatusError;
-    var lastDl = -1, lastInst = -1;
+    var lastDl = -1, lastInst = -1, installedTotal = 0;
 
     startUpdate = function () {
         if (isPatching) { return; }
         guard(function () {
             applied = [];
-            lastDl = -1; lastInst = -1;
+            lastDl = -1; lastInst = -1; installedTotal = 0;
             logEl.innerHTML = '';
             verdict.innerHTML = '-';
             headEl.innerHTML = HEAD;
@@ -1264,7 +1287,12 @@ if (document.readyState === 'complete' || document.readyState === 'interactive')
 
     patchingStatusInstalling = function (n, total) {
         guard(function () {
-            if (n !== lastInst) { lastInst = n; addLog('กำลังติดตั้ง ' + n + ' / ' + total, 'info'); }
+            if (total > installedTotal) { installedTotal = total; }
+            if (n !== lastInst) {
+                lastInst = n;
+                addLog('กำลังติดตั้ง ' + n + ' / ' + total, 'info');
+                headEl.innerHTML = HEAD + ' &nbsp;-&nbsp; สำเร็จแล้ว ' + n + ' ตัว';
+            }
         });
         _inst(n, total);
     };
@@ -1272,8 +1300,9 @@ if (document.readyState === 'complete' || document.readyState === 'interactive')
     patchingStatusReady = function () {
         _ready();
         guard(function () {
-            if (applied.length === 0) { addLog('ไม่มีแพตช์ใหม่ที่ต้องติดตั้ง', 'info'); }
-            else { addLog('จบการติดตั้ง - สำเร็จ ' + applied.length + ' ตัว', 'ok'); }
+            var n = applied.length ? applied.length : installedTotal;
+            if (n === 0) { addLog('ไม่มีแพตช์ใหม่ที่ต้องติดตั้ง', 'info'); }
+            else { addLog('จบการติดตั้ง - สำเร็จ ' + n + ' ตัว', 'ok'); }
             showVerdict();
         });
     };
@@ -1288,15 +1317,14 @@ if (document.readyState === 'complete' || document.readyState === 'interactive')
     };
 
     /* show the verdict on first load too, once the server number has arrived */
-    window.setTimeout(function () {
-        guard(function () {
-            wrap.style.display = 'block';
-            writeLogFile('---- launcher opened ----');
-            addLog('page: ' + location.href, 'info');
-            addLog('bridge: ' + probeBridge(), 'warn');
-            showVerdict();
-        });
-    }, 2500);
+    guard(function () {
+        wrap.style.display = 'block';
+        writeLogFile('---- launcher opened ----');
+        addLog('page: ' + location.href, 'info');
+        addLog('bridge: ' + probeBridge(), 'warn');
+    });
+    /* the verdict needs latestPublishedPatchIndex, which arrives by script tag */
+    window.setTimeout(function () { guard(showVerdict); }, 2500);
 })();
 </script>
 </body>
